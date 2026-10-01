@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 
-from .registry import TOOL_CATEGORIES, tool
+from .registry import TOOL_CATEGORIES, tool, workspace as current_workspace
 
 MAX_ROWS = 100
 SAMPLE_FOR_TYPES = 500
@@ -63,7 +63,7 @@ def _infer(values):
 
 def _connection():
     """The in-memory database for the current workspace, rebuilt when a CSV changes."""
-    workspace = os.getcwd()
+    workspace = current_workspace()
     files = _csv_files(workspace)
     key = (workspace, tuple((f, os.path.getmtime(f), os.path.getsize(f)) for f in files))
     if key == _cache["key"]:
@@ -162,8 +162,8 @@ def query(sql):
 def write_report(filename, content):
     if not re.fullmatch(r"[\w-]+\.md", filename):
         return "Error: filename must look like name.md (letters, digits, - and _ only)."
-    os.makedirs("reports", exist_ok=True)
     path = os.path.join("reports", filename)
-    with open(path, "w") as f:
+    os.makedirs(os.path.join(current_workspace(), "reports"), exist_ok=True)
+    with open(os.path.join(current_workspace(), path), "w") as f:
         f.write(content)
     return f"Saved {path} ({len(content.splitlines())} lines)."

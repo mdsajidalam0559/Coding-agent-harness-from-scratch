@@ -108,24 +108,27 @@ def summarize_transcript(path):
 REVIEW_ROUNDS = 2
 
 
-def review_loop(agent, task, workdir):
-    """Day 11: an evaluator agent checks the work; its findings go back to the agent (up to REVIEW_ROUNDS)."""
+def review_loop(model, task, workdir, last_reply, send_feedback, log_file, sandbox=None):
+    """Day 11: an evaluator agent checks the work; its findings go back to the agent (up to REVIEW_ROUNDS).
+
+    last_reply() returns the agent's latest answer; send_feedback(text) gives the agent another turn.
+    """
     from longrun import evaluator
     verdicts = []
     for _ in range(REVIEW_ROUNDS):
-        replies = [m.get("content") or "" for m in agent.messages if m.get("role") == "assistant" and not m.get("tool_calls")]
-        review = evaluator.run_evaluator(agent, workdir, task["prompt"], replies[-1] if replies else "",
-                                         evaluator.dir_diff(os.path.join(task["dir"], "repo"), workdir))
+        review = evaluator.run_evaluator(model, workdir, task["prompt"], last_reply(),
+                                         evaluator.dir_diff(os.path.join(task["dir"], "repo"), workdir),
+                                         log_file=log_file, sandbox=sandbox)
         verdicts.append(review["verdict"])
         if review["verdict"] != "fail":
             break
-        home = os.getcwd()
-        os.chdir(workdir)
-        try:
-            agent.agentic_loop(evaluator.FEEDBACK_PROMPT.format(issues=evaluator.format_issues(review), claim_again=""))
-        finally:
-            os.chdir(home)
+        send_feedback(evaluator.FEEDBACK_PROMPT.format(issues=evaluator.format_issues(review), claim_again=""))
     return verdicts
+
+
+def last_assistant_reply(messages):
+    replies = [m.get("content") or "" for m in messages if m.get("role") == "assistant" and not m.get("tool_calls")]
+    return replies[-1] if replies else ""
 
 
 def run_trial(agent, task, sandbox_mode, use_evaluator=False):
@@ -153,7 +156,10 @@ def run_trial(agent, task, sandbox_mode, use_evaluator=False):
         with contextlib.redirect_stdout(io.StringIO()):
             agent.agentic_loop(task["prompt"])
             if use_evaluator:
-                verdicts = review_loop(agent, task, workdir)
+                from models.registry import make_model
+                verdicts = review_loop(make_model(f"{getattr(agent, 'PROVIDER', 'openrouter')}:{agent.MODEL}"), task,
+                                       workdir, lambda: last_assistant_reply(agent.messages), agent.agentic_loop,
+                                       agent.log_file, tools.shell.SANDBOX)
     except Exception as e:  # a harness bug must not kill the whole run
         crash = repr(e)
     finally:
@@ -169,7 +175,7 @@ def run_trial(agent, task, sandbox_mode, use_evaluator=False):
             "trial_dir": trial_dir, **summarize_transcript(agent.log_file)}
 
 
-def run_core_trial(kind, model_spec, task, sandbox_mode):
+def run_core_trial(kind, model_spec, task, sandbox_mode, use_evaluator=False):
     """A trial for an agent built on core/ (Day 14): a fresh Agent, so nothing carries over between trials."""
     from agents import make_agent
     from models.registry import make_model
@@ -185,23 +191,22 @@ def run_core_trial(kind, model_spec, task, sandbox_mode):
     sandbox = None
     if sandbox_mode == "docker":
         from safety.sandbox import DockerSandbox
-        sandbox = DockerSandbox(workdir).start()
-        tools.shell.SANDBOX = sandbox
-    home, start, crash, status = os.getcwd(), time.monotonic(), None, None
-    os.chdir(workdir)
-    try:
+        sandbox = agent.sandbox = DockerSandbox(workdir).start()
+    start, crash, status, verdicts = time.monotonic(), None, None, []
+    try:  # no os.chdir: the agent's tools work in its workspace wherever the process is
         with contextlib.redirect_stdout(io.StringIO()):
             status = agent.run(task["prompt"]).status
+            if use_evaluator:
+                verdicts = review_loop(agent.model, task, workdir, lambda: last_assistant_reply(agent.messages),
+                                       lambda text: agent.run(text), log_file, sandbox)
     except Exception as e:
         crash = repr(e)
     finally:
-        os.chdir(home)
-        tools.shell.SANDBOX = None
         if sandbox:
             sandbox.stop()
     passed, grade_output = grade(task, workdir, sandbox_mode)
     return {"passed": passed, "seconds": round(time.monotonic() - start, 1), "crash": crash, "status": status,
-            "grade_output": grade_output, "evaluator_verdicts": [], "trial_dir": trial_dir,
+            "grade_output": grade_output, "evaluator_verdicts": verdicts, "trial_dir": trial_dir,
             **summarize_transcript(log_file)}
 
 
@@ -282,7 +287,7 @@ def main():
         kind = args.agent.split(":", 1)[1]
         spec = args.model if args.model and ":" in args.model and not args.provider else \
             f"{args.provider or 'groq'}:{args.model or 'openai/gpt-oss-120b'}"
-        run = lambda task: run_core_trial(kind, spec, task, args.sandbox)
+        run = lambda task: run_core_trial(kind, spec, task, args.sandbox, use_evaluator=args.evaluator)
         model_name, provider = spec, spec.split(":", 1)[0]
     elif args.agent == "mini-swe":
         if args.sandbox != "off":
@@ -293,8 +298,6 @@ def main():
     else:
         module = f"days.{args.agent}" if args.agent.startswith("day_") else args.agent  # short names still work
         agent = importlib.import_module(module)
-        if args.evaluator and not hasattr(agent, "run_agent"):
-            raise SystemExit(f"--evaluator needs day_9_agent or later ({args.agent} has no run_agent)")
         if args.provider:
             if hasattr(agent, "PROVIDER"):
                 agent.PROVIDER = args.provider

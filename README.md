@@ -136,8 +136,8 @@ killed explicitly).
   (Aider's repo map is the main alternative; the evals did not show search-related failures.)
 
 ### Long-running work
-Continuity lives in files, not chat memory: `feature_list.json`, `progress.md`, git history. The
-**harness**, not the model, picks the next feature, runs the tests before and after each session,
+Continuity lives in files, not chat memory: `feature_list.json`, `progress.md`, git history. Each
+session is a fresh core `Agent` (so the empty context is real), on any model. The **harness**, not the model, picks the next feature, runs the tests before and after each session,
 decides the real status (a model's "done" is only a claim), writes the progress note and commits. An
 **independent evaluator agent** (fresh context, skeptical prompt, no edit tools, changes reverted)
 reviews every "done" claim and sends reproduced problems back. Live, it caught five real bugs in code
@@ -184,4 +184,3 @@ mini-SWE-agent) and what the numbers do and do not show.
   prompts, sampling or elicitation), and no OAuth for remote servers.
 - The free-tier quotas limit how many eval trials fit in a day, so the score table is small; rerun
   `python -m evals.final_eval` with more quota for tighter numbers.
-- No git history for the harness itself yet; the `days/` files are the snapshots (`.gitignore` is ready).

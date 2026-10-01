@@ -1,33 +1,44 @@
 """Build a project across many sessions, resuming each time from files, not chat memory.
 
-    python -m longrun.session --dir ~/projects/notes-cli --goal "A command-line notes app ..." --provider groq
+    python -m longrun.session --dir ~/projects/notes-cli --goal "A command-line notes app ..." --model groq:openai/gpt-oss-120b
     python -m longrun.session --dir ~/projects/notes-cli --sessions 3        # resume later
 
 Session 0 (the initializer) turns the goal into a project skeleton and feature_list.json.
 Every later session starts with an EMPTY context. It is given one feature, the plan, the latest
 progress notes and the git log; it implements and tests the feature and claims it done. The harness
 then runs the tests itself, records the real status, appends to progress.md and commits.
+
+Each session is a fresh core Agent (the coding agent's tools plus update_feature), so the empty
+context is real, not a reset of shared state. The evaluator is another Agent on the same model.
 """
 import argparse
 import contextlib
 import io
-import json
 import os
 import re
 import subprocess
 from datetime import datetime
 
-from days import day_10_agent as agent
-import tools.shell
+from agents.coding import coding_config
+from context.budget import context_overflow
+from core.agent import Agent, NullUI
+from ext import hooks as hooks_mod
 from longrun import evaluator, features
+from models.registry import DEFAULT_MODEL, make_model
 from safety.permissions import Policy
-from tools import execute_tool, files, todo
+from tools import execute_tool, todo
+from tools.registry import ToolContext, reset_context, set_context
+from ui.console import ConsoleUI
 
 PROGRESS_FILE = "progress.md"
 LOG_DIR = ".agent"  # session transcripts, git-ignored
 MAX_ATTEMPTS = 3  # sessions per feature before it is marked blocked
 MAX_REVIEW_ROUNDS = 2  # evaluator feedback rounds inside one session
 USE_EVALUATOR = True  # Day 11: an independent agent reviews every 'done' claim
+
+MODEL = None    # the ModelAdapter for every session (set by main(), or by tests)
+SANDBOX = None  # the Docker sandbox for agents and for the harness's own test runs, if any
+SESSION = {}    # the current session's generator agent (continue_session talks to it again)
 
 INITIALIZER_PROMPT = """You are setting up a project that will be built over several separate sessions. Each later session starts with NO memory of this conversation: only the files in this directory carry over.
 
@@ -136,12 +147,11 @@ def describe(result):
 
 def run_tests(workspace, command):
     """The harness's own check, run in the project (and in the sandbox when one is active)."""
-    home = os.getcwd()
-    os.chdir(workspace)
+    token = set_context(ToolContext(workspace, SANDBOX))
     try:
         output = execute_tool("bash", {"command": command, "timeout": 300})
     finally:
-        os.chdir(home)
+        reset_context(token)
     return parse_test_run(output)
 
 
@@ -158,45 +168,36 @@ def append_progress(workspace, text):
         f.write(text.rstrip() + "\n\n")
 
 
-def api_failure(events):
-    """The provider error that ended a session (quota, outage), if any. Not the agent's fault, so it must
-    not count as an attempt. A context overflow IS the agent's problem and is not reported here."""
-    from context.budget import context_overflow
-    for event in reversed(events):
-        if event["type"] == "api_error" and (event["data"].get("final") or not event["data"]["retryable"]):
-            if context_overflow(event["data"])[0]:
-                return None
-            error = event["data"].get("error")
-            message = error.get("message", "") if isinstance(error, dict) else str(error)
-            return f"API error {event['data'].get('status')}: {message[:300]}"
-        if event["type"] == "response":
-            return None
-    return None
+def new_agent(workspace, log_name, extra_tools, quiet):
+    """A fresh coding agent for one session: empty context, harness-owned files protected."""
+    policy = Policy(workspace, mode="auto", ask=None, protected=(features.FEATURE_FILE, PROGRESS_FILE))
+    return Agent(coding_config(extra_tools=extra_tools), MODEL, workspace, policy,
+                 hooks=hooks_mod.load_hooks(workspace, trust_project=False, ask=None),
+                 log_file=os.path.join(workspace, LOG_DIR, f"{log_name}.jsonl"),
+                 ui=NullUI() if quiet else ConsoleUI(), sandbox=SANDBOX)
+
+
+def take_turn(agent, message, quiet):
+    """One turn of `agent`. Returns (final reply, steps, interrupted, provider error or None).
+
+    A provider failure (quota, outage, bad key) is reported so it is not counted as an attempt; a context
+    overflow the agent could not recover from is the agent's own failure and is not reported here.
+    """
+    with contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext():
+        result = agent.run(message)
+    replies = [m.get("content") or "" for m in agent.messages if m.get("role") == "assistant" and not m.get("tool_calls")]
+    provider_error = None
+    if result.status == "api_error" and not context_overflow(agent.last_api_error)[0]:
+        provider_error = (result.error or "API error")[:300]
+    return (replies[-1] if replies else ""), result.steps, result.status == "interrupted", provider_error
 
 
 def run_session(workspace, log_name, prompt, extra_tools, allow_create, quiet):
     """One agent session with a completely fresh context. Returns (final reply, steps, interrupted, api_error)."""
-    agent.messages.clear()
-    agent.turn_count = 0
-    files._read_state.clear()
     todo.reset()
-    agent.policy = Policy(workspace, mode="auto", ask=None, protected=(features.FEATURE_FILE, PROGRESS_FILE))
-    agent.log_file = os.path.join(workspace, LOG_DIR, f"{log_name}.jsonl")
-    agent.EXTRA_TOOLS[:] = extra_tools
     features.STATE.update(claims={}, allow_create=allow_create)
-
-    home = os.getcwd()
-    os.chdir(workspace)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext():
-            agent.agentic_loop(prompt)
-    finally:
-        os.chdir(home)
-        agent.EXTRA_TOOLS[:] = []
-    replies = [m.get("content") or "" for m in agent.messages if m.get("role") == "assistant" and not m.get("tool_calls")]
-    events = [json.loads(line) for line in open(agent.log_file)] if os.path.exists(agent.log_file) else []
-    types = [e["type"] for e in events]
-    return (replies[-1] if replies else ""), types.count("response"), "interrupted" in types, api_failure(events)
+    SESSION["agent"] = new_agent(workspace, log_name, extra_tools, quiet)
+    return take_turn(SESSION["agent"], prompt, quiet)
 
 
 def judge(claim, after, feature):
@@ -213,21 +214,8 @@ def judge(claim, after, feature):
 
 
 def continue_session(workspace, message, quiet):
-    """Send one more message to the generator of the current session (it keeps its context)."""
-    agent.EXTRA_TOOLS[:] = ["update_feature"]
-    logged_before = sum(1 for _ in open(agent.log_file))
-    home = os.getcwd()
-    os.chdir(workspace)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()) if quiet else contextlib.nullcontext():
-            agent.agentic_loop(message)
-    finally:
-        os.chdir(home)
-        agent.EXTRA_TOOLS[:] = []
-    replies = [m.get("content") or "" for m in agent.messages if m.get("role") == "assistant" and not m.get("tool_calls")]
-    new_events = [json.loads(line) for line in open(agent.log_file)][logged_before:]
-    types = [e["type"] for e in new_events]
-    return (replies[-1] if replies else ""), types.count("response"), "interrupted" in types, api_failure(new_events)
+    """Send one more message to the current session's generator (it keeps its context)."""
+    return take_turn(SESSION["agent"], message, quiet)
 
 
 def initialize(workspace, goal, quiet):
@@ -323,8 +311,10 @@ def work_session(workspace, number, quiet):
         status, verdict = judge(claim, after, feature)
         if status != "done" or not USE_EVALUATOR:
             break
-        review = evaluator.run_evaluator(agent, workspace, spec, f"{claim.get('note', '')}\n{summary}",
-                                         evaluator.git_diff(workspace), plan["test_command"], quiet)
+        generator = SESSION["agent"]
+        review = evaluator.run_evaluator(MODEL, workspace, spec, f"{claim.get('note', '')}\n{summary}",
+                                         evaluator.git_diff(workspace), plan["test_command"], quiet,
+                                         log_file=generator.log_file, sandbox=SANDBOX)
         reviews.append(review)
         if review["verdict"] != "fail":  # pass, or no verdict (an evaluator malfunction must not block progress)
             if review["verdict"] == "none":
@@ -381,30 +371,27 @@ def main():
     parser.add_argument("--dir", required=True, help="project directory (created if missing)")
     parser.add_argument("--goal", help="what to build (required for a new project)")
     parser.add_argument("--sessions", type=int, default=10, help="max work sessions this run")
-    parser.add_argument("--provider", choices=list(agent.PROVIDERS))
-    parser.add_argument("--model")
+    parser.add_argument("--model", default=os.getenv("AGENT_MODEL_SPEC", DEFAULT_MODEL),
+                        help="provider:model, e.g. groq:openai/gpt-oss-120b (add +text for the text protocol)")
+    parser.add_argument("--provider", help="older form: --provider groq --model openai/gpt-oss-120b")
     parser.add_argument("--sandbox", choices=["docker", "off"], default="docker")
     parser.add_argument("--quiet", action="store_true", help="only print one line per session")
     parser.add_argument("--no-evaluator", action="store_true", help="skip the Day 11 evaluator review")
     args = parser.parse_args()
 
-    global USE_EVALUATOR
+    global USE_EVALUATOR, MODEL, SANDBOX
     USE_EVALUATOR = not args.no_evaluator
-    agent.PROVIDER = args.provider or agent.PROVIDER
-    agent.MODEL = args.model or os.getenv("AGENT_MODEL") or agent.PROVIDERS[agent.PROVIDER]["default_model"]
-    agent.base.provider_settings(agent.PROVIDER)
+    MODEL = make_model(f"{args.provider}:{args.model}" if args.provider else args.model)
     workspace = os.path.realpath(os.path.expanduser(args.dir))
     os.makedirs(os.path.join(workspace, LOG_DIR), exist_ok=True)
     ensure_repo(workspace)
 
-    sandbox = None
     if args.sandbox == "docker":
         from safety.sandbox import DockerSandbox
-        sandbox = DockerSandbox(workspace).start()
-        tools.shell.SANDBOX = sandbox
+        SANDBOX = DockerSandbox(workspace).start()
     else:
         print("⚠️  --sandbox off: the agent's commands run unattended on this machine.")
-    print(f"Project: {workspace}   Provider: {agent.PROVIDER}   Model: {agent.MODEL}\n")
+    print(f"Project: {workspace}   Model: {MODEL.name}\n")
 
     try:
         if not os.path.exists(features.path(workspace)):
@@ -422,9 +409,9 @@ def main():
         done = sum(f["status"] == "done" for f in plan["features"])
         print(f"\n{done}/{len(plan['features'])} features done. Progress log: {os.path.join(workspace, PROGRESS_FILE)}")
     finally:
-        if sandbox:
-            sandbox.stop()
-            tools.shell.SANDBOX = None
+        if SANDBOX:
+            SANDBOX.stop()
+            SANDBOX = None
 
 
 if __name__ == "__main__":

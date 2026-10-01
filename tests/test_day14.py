@@ -303,6 +303,54 @@ def test_two_agents_one_core():
           and data_agent.log_file != coding_agent.log_file)
 
 
+def test_agent_scoped_state():
+    a_ws = workspace({"shared.py": "x = 1\n"})
+    b_ws = workspace({"shared.py": "x = 1\n"})
+    reader = ScriptedModel([tools_reply(call("r", "read_file", path="shared.py")), answer("read it")])
+    writer = ScriptedModel([tools_reply(call("e", "str_replace", path="shared.py", old_str="x = 1", new_str="x = 2")),
+                            answer("tried")])
+    elsewhere = tempfile.mkdtemp()
+    with inside(elsewhere):  # the process is NOT in either workspace
+        agent_a = make_agent("coding", reader, a_ws, mode="auto")
+        agent_b = make_agent("coding", writer, b_ws, mode="auto")
+        agent_a.run("read shared.py")
+        agent_b.run("change x to 2 without reading")
+    check("tools work in the agent's own workspace, wherever the process is",
+          next(m for m in agent_a.messages if m["role"] == "tool")["content"].strip().startswith("1\tx = 1"))
+    check("agents do not share their record of read files (B may not edit what only A read)",
+          next(m for m in agent_b.messages if m["role"] == "tool")["content"].startswith("Error: you have not read")
+          and open(os.path.join(b_ws, "shared.py")).read() == "x = 1\n")
+
+    parent = ScriptedModel([tools_reply(call("r", "read_file", path="shared.py")),
+                            tools_reply(call("d", "delegate", task="set x to 3")),
+                            tools_reply(call("s", "str_replace", path="shared.py", old_str="x = 1", new_str="x = 3")),
+                            answer("sub tried"), answer("done")])
+    with inside(elsewhere):
+        agent = make_agent("coding", parent, a_ws, mode="auto")
+        agent.run("read, then delegate")
+    sub_result = next(m for m in agent.messages if m["role"] == "tool" and m["tool_call_id"] == "d")
+    check("a subagent starts with no read files, even ones its parent read",
+          open(os.path.join(a_ws, "shared.py")).read() == "x = 1\n" and "sub tried" in sub_result["content"])
+
+    class FakeSandbox:
+        def __init__(self, name):
+            self.name, self.commands = name, []
+
+        def exec(self, command, timeout, env):
+            self.commands.append(command)
+            return 0, f"ran in {self.name}", "", False
+
+    sandbox_a, sandbox_b = FakeSandbox("A"), FakeSandbox("B")
+    with inside(elsewhere):
+        agent_a = make_agent("coding", ScriptedModel([tools_reply(call("x", "bash", command="echo a")), answer("ok")]),
+                             a_ws, mode="auto", sandbox=sandbox_a)
+        agent_b = make_agent("coding", ScriptedModel([tools_reply(call("y", "bash", command="echo b")), answer("ok")]),
+                             b_ws, mode="auto", sandbox=sandbox_b)
+        agent_a.run("a")
+        agent_b.run("b")
+    check("each agent's commands go to its own sandbox", sandbox_a.commands == ["echo a"] and sandbox_b.commands == ["echo b"])
+
+
 # ---------------- headless + runner ----------------
 
 def test_headless():
@@ -352,6 +400,7 @@ if __name__ == "__main__":
     test_core_coding_agent()
     test_core_features()
     test_two_agents_one_core()
+    test_agent_scoped_state()
     test_headless()
     test_runner_core_agents()
     print("\nDay 14 tests passed.")

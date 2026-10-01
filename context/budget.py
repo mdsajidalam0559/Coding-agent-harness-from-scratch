@@ -21,7 +21,11 @@ def context_window(model):
         return int(os.getenv("AGENT_CONTEXT_WINDOW"))
     if model in CONTEXT_WINDOWS:
         return CONTEXT_WINDOWS[model]
-    if model.startswith("gemini"):
+    # providers name the same family differently ("claude-haiku-4-5" vs "anthropic/claude-haiku-4.5")
+    family = model.rsplit("/", 1)[-1]
+    if family.startswith("claude"):
+        return 200_000
+    if family.startswith("gemini"):
         return 1_048_576
     return DEFAULT_CONTEXT_WINDOW
 

@@ -12,7 +12,8 @@ from unittest import mock
 
 import requests
 
-from days import day_10_agent as agent
+from days import day_10_agent as agent  # the runner's review loop also works with day snapshots
+from models.registry import make_model
 from longrun import evaluator, features, session
 from tests.test_day7 import check, response, sse, text_chunks, tool_chunks
 from tools import execute_tool
@@ -201,6 +202,7 @@ def test_runner_review_loop():
 if __name__ == "__main__":
     home = os.getcwd()
     agent.PROVIDER = "openrouter"  # requests are faked
+    session.MODEL = make_model("openrouter:test-model")
     session.USE_EVALUATOR = True
     try:
         test_verdict_tool()

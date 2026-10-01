@@ -8,22 +8,22 @@ measured: Groq allows 7k input tokens per request and 200k tokens per model per 
 
 | Day | Checkpoint | Status | Evidence |
 |---|---|---|---|
-| 1 | Chat CLI with no SDK, every request/response field understood | ✅ | `main.ipynb`, JSONL logging |
+| 1 | Chat CLI with no SDK, every request/response field understood | ✅ | 6 checks; `days/day_1_agent.py`, JSONL token logging |
 | 2 | Multi-step task with tools; survives API errors | ✅ | 7 checks; live on OpenRouter |
 | 3 | Reliable targeted edits across files | ✅ built, ⏳ comparison | 21 checks; live: Haiku 3/3 on rename+constant before credit ran out |
 | 4 | Runs tests, fixes code; interactive commands time out cleanly | ✅ | 22 checks; live: `fix-failing-tests` passed on Groq (gpt-oss-120b, qwen3.8-27b) |
 | 5 | A planted malicious instruction causes no damage | ⏳ | 24 permission checks pass; the Docker sandbox and injection checkpoint are written but need the `docker` group |
 | 6 | A baseline score table | ✅ partial | runner, report, 8 validated tasks; baseline below |
 | 7 | Streaming terminal agent + text-protocol loop | ✅ built, ⏳ comparison | 32 checks; streaming verified live on Groq and Gemini |
-| 8 | Cost per task drops | ⏳ | 27 checks; 14% cached prompt tokens observed live on Groq |
+| 8 | Cost per task drops | ⏳ | 28 checks; 14% cached prompt tokens observed live on Groq |
 | 9 | Long tasks survive compaction | ✅ offline, ⏳ live | 22 checks incl. 300 random histories; live run did not reach the window |
-| 10 | 5-feature project across sessions | ⏳ 1/5 | `~/Work/agent-projects/notes-cli`: feature 1 done, resumed across sessions from files; paused by the daily quota |
+| 10 | 5-feature project across sessions | ⏳ 1/5 | 43 checks; `~/Work/agent-projects/notes-cli`: feature 1 done, resumed across sessions from files; paused by the daily quota (resume: `python -m longrun.session --dir ~/Work/agent-projects/notes-cli --model groq:openai/gpt-oss-120b --sandbox off`) |
 | 11 | Evaluator catches bugs the generator claimed fixed | ✅ | 16 checks; live: caught 5 real bugs behind a false "all tests pass" claim (2 not planted) |
 | 12 | Agent uses a third-party MCP server's tools | ✅ | 66 checks; live: gpt-oss-20b used `mcp-server-git` correctly; client tested against `server-everything` (stdio + HTTP) |
 | 13 | Explainable eval improvement | ✅ built, ⏳ measurement | 30 checks; ports chosen from the baseline's failures (docs/harness_comparison.md) |
-| 14 | Two agents on one core + score table | ✅ agents, ⏳ table | 45 checks; both agents solved a task live in headless mode |
+| 14 | Two agents on one core + score table | ✅ agents, ⏳ table | 49 checks; both agents solved a task live in headless mode |
 
-373 automated checks pass across the 13 suites (`python -m tests.run_all`).
+385 automated checks pass across the 14 suites (`python -m tests.run_all`).
 
 ## Live measurements
 

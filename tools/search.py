@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from .registry import tool
+from .registry import resolve, tool, workspace
 from .shell import strip_ansi
 
 MAX_MATCHES = 100
@@ -24,7 +24,7 @@ MAX_LINE_CHARS = 300
 )
 def search(pattern, path=".", glob=None, ignore_case=False):
     path = path or "."
-    if not os.path.exists(path):
+    if not os.path.exists(resolve(path)):
         return f"Error: {path} does not exist."
     cmd = ["rg", "--line-number", "--no-heading", "--color=never", "--sort=path",
            f"--max-columns={MAX_LINE_CHARS}", "--max-columns-preview"]
@@ -34,7 +34,7 @@ def search(pattern, path=".", glob=None, ignore_case=False):
         cmd += ["--glob", glob]
     cmd += ["-e", pattern, "--", path]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd=workspace(),
                             stdin=subprocess.DEVNULL, timeout=30)
     if result.returncode == 1:
         return f"No matches for {pattern!r} in {path}" + (f" (glob {glob})" if glob else "") + "."

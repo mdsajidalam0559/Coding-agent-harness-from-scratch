@@ -84,6 +84,5 @@ class OpenAICompatAdapter(ModelAdapter):
     def _to_response(body):
         choice = body["choices"][0]
         message = choice["message"]
-        extra = {}
         return ModelResponse(text=message.get("content") or "", tool_calls=message.get("tool_calls") or [],
-                             usage=body.get("usage") or {}, finish_reason=choice.get("finish_reason"), extra=extra)
+                             usage=body.get("usage") or {}, finish_reason=choice.get("finish_reason"))

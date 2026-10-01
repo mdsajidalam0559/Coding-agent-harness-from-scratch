@@ -74,6 +74,9 @@ def test_budget():
     check("a new turn resets turn totals but not the session", b.turn["calls"] == 0 and b.session["calls"] == 2)
 
     check("known model windows", context_window("openai/gpt-oss-120b") == 131_072)
+    check("model families match across providers' naming",
+          context_window("claude-haiku-4-5") == 200_000 and context_window("anthropic/claude-haiku-4.5") == 200_000
+          and context_window("google/gemini-2.5-flash") == 1_048_576 and context_window("some-unknown-model") == 128_000)
     with mock.patch.dict(os.environ, {"AGENT_CONTEXT_WINDOW": "5000"}):
         check("AGENT_CONTEXT_WINDOW overrides", context_window("openai/gpt-oss-120b") == 5000)
 

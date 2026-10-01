@@ -15,8 +15,8 @@ the final core) have no snapshot of their own: their code lives in the packages 
 | 7 | Streaming (hand-parsed SSE), safe Ctrl-C, providers, and a second loop: the text protocol (bash blocks, no tool API) | `days/day_7_agent.py`, `models/sse.py` | `python -m days.day_7_agent --provider groq` (add `--text-protocol` for the text loop) | `tests/test_day7.py` |
 | 8 | Context I: system prompt, AGENTS.md, token budget, output caps, caching | `days/day_8_agent.py`, `context/budget.py`, `context/prompt.py` | `python -m days.day_8_agent` | `tests/test_day8.py` |
 | 9 | Context II: compaction, history validator, subagents | `days/day_9_agent.py`, `context/compaction.py` | `python -m days.day_9_agent` | `tests/test_day9.py` |
-| 10 | Planning and long-running work: todo tool, feature list, multi-session harness | `days/day_10_agent.py`, `tools/todo.py`, `longrun/` | `python -m longrun.session --dir ... --goal ...` | `tests/test_day10.py` |
-| 11 | Verification: an independent evaluator agent (agent: Day 10) | `longrun/evaluator.py` | `python -m evals.runner --agent day_10_agent --evaluator ...` | `tests/test_day11.py` |
+| 10 | Planning and long-running work: todo tool, feature list, multi-session harness | `days/day_10_agent.py`, `tools/todo.py`, `longrun/` | `python -m longrun.session --dir ... --goal ... --model groq:openai/gpt-oss-120b` | `tests/test_day10.py` |
+| 11 | Verification: an independent evaluator agent (now a core `Agent`; reviews any agent) | `longrun/evaluator.py` | `python -m evals.runner --agent core:coding --evaluator ...` | `tests/test_day11.py` |
 | 12 | Extensibility: MCP client from the spec, hooks, skills | `days/day_12_agent.py`, `ext/` | `python -m days.day_12_agent --mcp-config servers.json` | `tests/test_day12.py` |
 | 13 | Ideas from production harnesses: overflow recovery, window-aware output, ask_user | `days/day_13_agent.py`, `tools/ask.py`, `docs/harness_comparison.md` | `python -m days.day_13_agent` | `tests/test_day13.py` |
 | 14 | One model-agnostic core, two agents, headless mode, final eval | `core/`, `agents/`, `models/`, `ui/`, `tools/data.py`, `evals/final_eval.py` | `python -m ui.tui` / `python -m ui.headless` | `tests/test_day14.py` |
@@ -24,8 +24,8 @@ the final core) have no snapshot of their own: their code lives in the packages 
 Notes:
 - Days 1-5 only know OpenRouter (it was the only provider then). The eval runner can still run them on
   other providers by swapping just their HTTP call: `python -m evals.runner --agent day_5_agent --provider groq ...`.
-- Later days import earlier ones: day 8 builds on day 7; days 9, 10, 12 and 13 on days 7 and 8;
-  `longrun/` uses day 10.
+- Later days import earlier ones: day 8 builds on day 7; days 9, 10, 12 and 13 on days 7 and 8.
+  `longrun/` was built on day 10 and now runs on the final core (`core/` + `agents/`), like the evaluator.
 - The shared packages (`tools/`, `safety/`, `context/`, ...) kept improving after the day that
   introduced them, so an old snapshot runs with today's tools, not the exact tools of its day.
 - Evals of the Day 7 text loop: `AGENT_PROTOCOL=text python -m evals.runner --agent day_7_agent ...`.

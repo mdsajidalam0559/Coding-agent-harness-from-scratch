@@ -18,6 +18,7 @@ import re
 
 from safety.permissions import TOOL_CATEGORIES
 from tools import tool
+from tools.registry import workspace as current_workspace
 
 PROJECT_DIR = os.path.join(".agent", "skills")
 USER_DIR = os.path.expanduser("~/.agent/skills")
@@ -135,7 +136,7 @@ def load_skill(name):
         return f"Error: no skill named {name!r}. Available skills: {available}."
     out = f"# Skill: {skill['name']}\n\n{skill['body']}"
     if skill["files"]:
-        workspace = os.getcwd()
+        workspace = current_workspace()
         listing = []
         for rel in skill["files"][:MAX_LISTED_FILES]:
             read_path, bash_path = _paths(skill, rel, workspace)

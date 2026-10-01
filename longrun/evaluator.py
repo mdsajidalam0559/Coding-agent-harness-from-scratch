@@ -9,7 +9,6 @@ import difflib
 import os
 import subprocess
 
-from context.budget import TokenBudget, context_window
 from tools import tool
 
 EVALUATOR_TOOLS = ["read_file", "list_dir", "search", "bash", "submit_verdict"]
@@ -141,33 +140,34 @@ def format_issues(verdict):
                      for n, i in enumerate(verdict["issues"], 1))
 
 
-def run_evaluator(agent, workspace, spec, claim, diff, test_command=None, quiet=True):
-    """Review the work in `workspace` with a fresh evaluator agent.
+def run_evaluator(model, workspace, spec, claim, diff, test_command=None, quiet=True, log_file=None, sandbox=None):
+    """Review the work in `workspace` with a fresh evaluator agent on `model` (any ModelAdapter).
 
-    `agent` is the agent module whose loop, model and logging are reused (day_9_agent or later).
+    The evaluator is its own core Agent: fresh context, read/search/run tools only, its own record of read
+    files. It logs into `log_file` (the generator's transcript, so its cost is counted with the run).
     Returns {"verdict": "pass" | "fail" | "none", "summary", "issues", "reverted"}.
     """
+    from core.agent import Agent, AgentConfig
+    from safety.permissions import Policy
+
     VERDICT.clear()
-    if agent.budget is None:
-        agent.budget = TokenBudget(context_window(agent.MODEL))
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + f"\n[... diff truncated; {len(diff) - MAX_DIFF_CHARS} more characters: read the files ...]"
     tests = f"\nThe project's test command: `{test_command}`\n" if test_command else ""
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": TASK_PROMPT.format(spec=spec, claim=claim or "(no report)",
-                                                          diff=diff or "(no changes found)", tests=tests)}]
+    config = AgentConfig(name="evaluator", tools=EVALUATOR_TOOLS, system_prompt=SYSTEM_PROMPT,
+                         max_steps=EVALUATOR_MAX_STEPS, log_label="evaluator")
+    evaluator = Agent(config, model, workspace, Policy(workspace, "auto", ask=None),
+                      log_file=log_file or os.path.join(workspace, ".agent", "evaluator.jsonl"), sandbox=sandbox)
     before = snapshot(workspace)
-    home = os.getcwd()
-    os.chdir(workspace)
-    agent.log_to_jsonl("evaluator_start", {"spec": spec[:2000]})
+    evaluator.log("evaluator_start", {"spec": spec[:2000]})
     try:
-        agent.run_agent(msgs, EVALUATOR_TOOLS, EVALUATOR_MAX_STEPS, label="evaluator", stream=False)
+        evaluator.run(TASK_PROMPT.format(spec=spec, claim=claim or "(no report)", diff=diff or "(no changes found)",
+                                         tests=tests))
     finally:
-        os.chdir(home)
         reverted = restore(workspace, before)
     result = {"verdict": VERDICT.get("verdict", "none"), "summary": VERDICT.get("summary", ""),
               "issues": VERDICT.get("issues", []), "reverted": reverted}
-    agent.log_to_jsonl("evaluator_verdict", result)
+    evaluator.log("evaluator_verdict", result)
     if not quiet:
         print(f"  🔎 evaluator: {result['verdict']}. {result['summary'][:200]}")
         for issue in result["issues"]:

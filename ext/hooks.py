@@ -23,6 +23,7 @@ import subprocess
 
 from ext.trust import approve_project_file
 from tools.files import apply_edits_paths
+from tools.registry import resolve
 
 USER_CONFIG = os.path.expanduser("~/.agent/hooks.json")
 PROJECT_CONFIG = os.path.join(".agent", "hooks.json")
@@ -85,10 +86,10 @@ def python_syntax_check(tool, args, result):
         return None
     problems = []
     for path in edited_paths(tool, args):
-        if not path.endswith(".py") or not os.path.isfile(path):
+        if not path.endswith(".py") or not os.path.isfile(resolve(path)):
             continue
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(resolve(path), encoding="utf-8") as f:
                 ast.parse(f.read(), filename=path)
         except SyntaxError as e:
             problems.append(f"{path} line {e.lineno}: {e.msg}" + (f"\n    {e.text.rstrip()}" if e.text else ""))

@@ -15,7 +15,6 @@ import os
 import sys
 import time
 
-import tools.shell
 from agents import make_agent, runs_commands
 from agents.coding import Extensions
 from longrun.evaluator import snapshot
@@ -75,12 +74,11 @@ def main(argv=None):
         if args.sandbox == "docker" and needs_sandbox:
             from safety.sandbox import DockerSandbox
             sandbox = DockerSandbox(workspace).start()
-            tools.shell.SANDBOX = sandbox
+            agent.sandbox = sandbox
         result = agent.run(task.strip())
     finally:
         if sandbox:
             sandbox.stop()
-            tools.shell.SANDBOX = None
         if extensions:
             extensions.close()
 

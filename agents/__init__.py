@@ -16,7 +16,7 @@ def build_policy(workspace, mode, ask=None, readable_roots=()):
 
 
 def make_agent(kind, model, workspace, mode="auto-read", ask=None, ui=None, log_file=None,
-               edit_format="str_replace", extensions=None):
+               edit_format="str_replace", extensions=None, sandbox=None):
     """An Agent of the given kind ('coding' or 'data') on any model adapter."""
     from core.agent import Agent
     if kind == "coding":
@@ -29,4 +29,5 @@ def make_agent(kind, model, workspace, mode="auto-read", ask=None, ui=None, log_
         raise ValueError(f"unknown agent {kind!r} (choose coding or data)")
     policy = build_policy(workspace, mode, ask)
     return Agent(config, model, workspace, policy, hooks=extensions.hooks if extensions else None,
-                 log_file=log_file or os.path.join(workspace, ".agent", f"{kind}-transcript.jsonl"), ui=ui)
+                 log_file=log_file or os.path.join(workspace, ".agent", f"{kind}-transcript.jsonl"), ui=ui,
+                 sandbox=sandbox)

@@ -7,7 +7,6 @@
 import argparse
 import os
 
-import tools.shell
 from agents import make_agent, runs_commands
 from agents.coding import Extensions
 from ext import skills
@@ -44,7 +43,7 @@ def main():
             user_skills = any(s["source"] == "user" for s in skills.STATE["skills"].values())
             mounts = [(skills.USER_DIR, skills.SANDBOX_USER_DIR)] if user_skills else []
             sandbox = DockerSandbox(workspace, network=args.network, mounts=mounts).start()
-            tools.shell.SANDBOX = sandbox
+            agent.sandbox = sandbox
             skills.STATE["user_dir_in_sandbox"] = skills.SANDBOX_USER_DIR if user_skills else None
         print(f"{args.agent} agent · {model.name} ({model.context_window // 1000}k context) · permissions "
               f"{args.permission_mode} · sandbox {'docker' if sandbox else ('not needed (no command tools)' if not runs_commands(agent) else 'OFF (commands run on this machine)')}"
@@ -72,7 +71,6 @@ def main():
     finally:
         if sandbox:
             sandbox.stop()
-            tools.shell.SANDBOX = None
         if extensions:
             extensions.close()
 

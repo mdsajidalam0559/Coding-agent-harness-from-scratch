@@ -3,7 +3,7 @@ import re
 import signal
 import subprocess
 
-from .registry import tool
+from .registry import current_context, tool, workspace
 
 DEFAULT_TIMEOUT = 30
 MAX_TIMEOUT = 300
@@ -38,7 +38,8 @@ def truncate(text, limit=MAX_STREAM_CHARS):
     return f"{text[:head]}\n\n... [{len(text) - head - tail} characters truncated] ...\n\n{text[-tail:]}"
 
 
-# Set by the agent to run commands inside a container (safety.sandbox.DockerSandbox); None = run on the host
+# Container for commands when no agent context names one (the day snapshots set this); None = run on the host.
+# A core.Agent passes its sandbox through its ToolContext instead.
 SANDBOX = None
 
 
@@ -46,6 +47,7 @@ def _run_on_host(command, timeout):
     """Returns (returncode, stdout, stderr, timed_out)."""
     proc = subprocess.Popen(
         ["bash", "-c", command],
+        cwd=workspace(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -97,8 +99,10 @@ def _kill_group(proc):
 )
 def bash(command, timeout=DEFAULT_TIMEOUT):
     timeout = max(1, min(int(timeout), MAX_TIMEOUT))
-    if SANDBOX is not None:
-        returncode, stdout, stderr, timed_out = SANDBOX.exec(command, timeout, NON_INTERACTIVE_ENV)
+    context = current_context()
+    sandbox = context.sandbox if context and context.sandbox is not None else SANDBOX
+    if sandbox is not None:
+        returncode, stdout, stderr, timed_out = sandbox.exec(command, timeout, NON_INTERACTIVE_ENV)
     else:
         returncode, stdout, stderr, timed_out = _run_on_host(command, timeout)
 

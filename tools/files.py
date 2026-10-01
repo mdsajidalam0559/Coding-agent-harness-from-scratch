@@ -2,7 +2,7 @@ import hashlib
 import re
 import os
 
-from .registry import tool
+from .registry import current_context, resolve, tool
 
 MAX_READ_LINES = 2000
 MAX_READ_CHARS = 40_000  # ~11k tokens per read, whatever the line count
@@ -11,25 +11,32 @@ MAX_LIST_ENTRIES = 200
 SKIP_DIRS = {".git", ".venv", "venv", "__pycache__", "node_modules", ".agent"}
 CONTEXT_LINES = 3
 
-# path -> sha256 of the file content when the agent last read or wrote it
+# path -> sha256 of the file content when last read or written, used when no agent context is set
+# (an Agent keeps its own record in its ToolContext)
 _read_state = {}
 
 
+def _reads():
+    context = current_context()
+    return context.read_state if context else _read_state
+
+
 def _key(path):
-    return os.path.realpath(path)
+    return os.path.realpath(resolve(path))
 
 
 def _load(path):
     # newline="" keeps \r\n intact so we match exactly what is on disk
-    with open(path, "r", encoding="utf-8", newline="") as f:
+    with open(resolve(path), "r", encoding="utf-8", newline="") as f:
         return f.read()
 
 
 def _save(path, content):
-    parent = os.path.dirname(path)
+    full = resolve(path)
+    parent = os.path.dirname(full)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with open(full, "w", encoding="utf-8", newline="") as f:
         f.write(content)
 
 
@@ -38,12 +45,12 @@ def _digest(content):
 
 
 def _remember(path, content):
-    _read_state[_key(path)] = _digest(content)
+    _reads()[_key(path)] = _digest(content)
 
 
 def _check_fresh(path, content):
     """Return an error string if the agent may not modify this file, else None."""
-    recorded = _read_state.get(_key(path))
+    recorded = _reads().get(_key(path))
     if recorded is None:
         return f"Error: you have not read {path} yet. Call read_file on it before modifying it."
     if recorded != _digest(content):
@@ -81,7 +88,7 @@ def _snippet(content, first_line, last_line):
     required=["path"],
 )
 def read_file(path, offset=1, limit=MAX_READ_LINES):
-    if not os.path.isfile(path):
+    if not os.path.isfile(resolve(path)):
         return f"Error: {path} does not exist or is not a file."
     try:
         content = _load(path)
@@ -120,13 +127,14 @@ def read_file(path, offset=1, limit=MAX_READ_LINES):
 )
 def list_dir(path="."):
     path = path or "."
-    if not os.path.isdir(path):
+    if not os.path.isdir(resolve(path)):
         return f"Error: {path} is not a directory."
     entries = []
-    for name in sorted(os.listdir(path)):
+    base = resolve(path)
+    for name in sorted(os.listdir(base)):
         if name in SKIP_DIRS:
             continue
-        full = os.path.join(path, name)
+        full = os.path.join(base, name)
         entries.append(name + "/" if os.path.isdir(full) else name)
     if not entries:
         return f"({path} is empty)"
@@ -146,8 +154,8 @@ def list_dir(path="."):
     },
 )
 def write_file(path, content):
-    if os.path.exists(path):
-        if not os.path.isfile(path):
+    if os.path.exists(resolve(path)):
+        if not os.path.isfile(resolve(path)):
             return f"Error: {path} exists and is not a file."
         error = _check_fresh(path, _load(path))
         if error:
@@ -214,7 +222,7 @@ def _not_found_help(path, content, old_str):
     },
 )
 def str_replace(path, old_str, new_str):
-    if not os.path.isfile(path):
+    if not os.path.isfile(resolve(path)):
         return f"Error: {path} does not exist. Use write_file to create a new file."
     content = _load(path)
     error = _check_fresh(path, content)
@@ -286,7 +294,7 @@ def apply_edits(edits):
 
         if path in pending:
             content = pending[path]
-        elif os.path.isfile(path):
+        elif os.path.isfile(resolve(path)):
             content = _load(path)
             error = _check_fresh(path, content)
             if error:

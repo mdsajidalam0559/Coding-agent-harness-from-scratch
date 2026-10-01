@@ -12,7 +12,8 @@ from unittest import mock
 
 import requests
 
-from days import day_10_agent as agent
+import core.agent as core_agent
+from models.registry import make_model
 from longrun import features, session
 from safety.permissions import Policy
 from tests.test_day7 import check, response, sse, text_chunks, tool_chunks
@@ -143,6 +144,8 @@ def test_multi_session_build():
     check("one commit per session", len(log) == 4, log)
     progress = open(os.path.join(ws, "progress.md")).read()
     check("progress.md has an entry per session", all(f"## Session {n}" in progress for n in range(4)))
+    check("each session runs on the core Agent, with its own fresh context",
+          type(session.SESSION["agent"]).__name__ == "Agent" and session.SESSION["agent"].workspace == os.path.realpath(ws))
     check("transcripts are kept out of git", ".agent/" in open(os.path.join(ws, ".gitignore")).read()
           and not any(".agent" in line for line in subprocess.run(["git", "ls-files"], cwd=ws, capture_output=True,
                                                                      text=True).stdout.splitlines()))
@@ -256,7 +259,7 @@ def test_done_needs_new_tests_and_regressions_are_named():
 def test_interrupted_session_is_committed_and_stops():
     ws = seeded_project({})
     post, _ = fake_model([calls(("bash", {"command": "sleep 30"}))])
-    real = agent.execute_tool
+    real = core_agent.execute_tool
 
     def ctrl_c_on_bash(name, args):
         if name == "bash" and "sleep" in args.get("command", ""):
@@ -264,7 +267,7 @@ def test_interrupted_session_is_committed_and_stops():
         return real(name, args)
 
     with mock.patch.object(requests, "post", side_effect=post), \
-            mock.patch.object(agent, "execute_tool", side_effect=ctrl_c_on_bash):
+            mock.patch.object(core_agent, "execute_tool", side_effect=ctrl_c_on_bash):
         outcome = session.work_session(ws, 1, quiet=True)
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=ws, capture_output=True, text=True).stdout
     check("Ctrl-C ends the session as 'interrupted' and commits the work in progress",
@@ -288,7 +291,7 @@ def test_provider_errors_are_not_counted():
 
 if __name__ == "__main__":
     home = os.getcwd()
-    agent.PROVIDER = "openrouter"  # requests are faked; any provider with a key in .env works
+    session.MODEL = make_model("openrouter:test-model")  # a real adapter; its HTTP requests are faked
     session.USE_EVALUATOR = False  # these scripts have no evaluator turns; Day 11 tests cover the evaluator
     try:
         test_todo()

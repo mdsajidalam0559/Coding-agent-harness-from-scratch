@@ -17,7 +17,7 @@ from context.budget import CHARS_PER_TOKEN, TokenBudget, clip_tool_result, conte
 from context.compaction import SUMMARIZER_PROMPT, compact, validate_history
 from models.base import ModelError, ModelResponse
 from tools import execute_tool, tool, tool_schemas
-from tools.registry import REGISTRY
+from tools.registry import REGISTRY, ToolContext, reset_context, set_context
 
 INTERRUPTED = "Interrupted by the user before this finished. Wait for the user's next instruction."
 SHRUNK = "[output removed to fit the context window; run the tool again if you still need it]"
@@ -39,6 +39,7 @@ class AgentConfig:
     tool_output_window_share: float = 0.15
     max_overflow_recoveries: int = 3
     max_output_tokens: int = 4000
+    log_label: str = "main"          # how this agent's steps are labelled in a shared transcript
 
 
 class NullUI:
@@ -61,7 +62,7 @@ class TurnResult:
 
 
 class Agent:
-    def __init__(self, config, model, workspace, policy, hooks=None, log_file=None, ui=None):
+    def __init__(self, config, model, workspace, policy, hooks=None, log_file=None, ui=None, sandbox=None):
         self.config, self.model = config, model
         self.workspace = os.path.realpath(workspace)
         self.policy, self.hooks, self.ui = policy, hooks, ui or NullUI()
@@ -72,6 +73,16 @@ class Agent:
         self.learned_window = None
         self.last_api_error = {}
         self.budget = TokenBudget(self.window())
+        # what tools see while this agent runs: its workspace, its sandbox, the files it has read
+        self.tool_context = ToolContext(self.workspace, sandbox)
+
+    @property
+    def sandbox(self):
+        return self.tool_context.sandbox
+
+    @sandbox.setter
+    def sandbox(self, value):
+        self.tool_context.sandbox = value
 
     # ---------- bookkeeping ----------
 
@@ -110,14 +121,16 @@ class Agent:
         self.budget.start_turn()
         self.messages.append({"role": "user", "content": user_message})
         self.log("user_message", {"turn": self.turn_count, "content": user_message})
-        token = CURRENT.set(self)
+        token, context_token = CURRENT.set(self), set_context(self.tool_context)
         try:
-            result = self.loop(self.messages, self.tool_names(), self.config.max_steps, label="main", stream=True)
+            result = self.loop(self.messages, self.tool_names(), self.config.max_steps, label=self.config.log_label,
+                               stream=True)
         except KeyboardInterrupt:
             filled = repair_history(self.messages)
             self.log("interrupted", {"turn": self.turn_count, "unfinished_tool_calls": filled})
             result = TurnResult("interrupted")
         finally:
+            reset_context(context_token)
             CURRENT.reset(token)
             self.log("turn_usage", {"turn": self.turn_count, **self.budget.turn,
                                     "context_tokens": self.budget.context_tokens})
@@ -129,7 +142,12 @@ class Agent:
                {"role": "user", "content": task}]
         names = [n for n in self.tool_names() if n not in self.config.no_subagent_tools]
         self.log("subagent_start", {"task": task})
-        result = self.loop(sub, names, self.config.sub_max_steps, label="sub", stream=False)
+        # same workspace and sandbox, but its own record of read files: it starts knowing nothing
+        context_token = set_context(ToolContext(self.workspace, self.sandbox))
+        try:
+            result = self.loop(sub, names, self.config.sub_max_steps, label="sub", stream=False)
+        finally:
+            reset_context(context_token)
         self.log("subagent_end", {"status": result.status, "messages": len(sub)})
         if result.status == "done":
             return result.text
@@ -145,15 +163,15 @@ class Agent:
             step += 1
             self.check_history(msgs, label)
             self.maybe_compact(msgs, names, label)
-            payload_msgs = msgs
             self.log("request", {"agent": label, "turn": self.turn_count, "step": step, "model": self.model.name,
-                                 "payload": {"messages": payload_msgs, "tools": tool_schemas(names)}})
+                                 "payload": {"messages": msgs, "tools": tool_schemas(names)}})
             streamed = []
 
             def on_text(piece):
                 streamed.append(piece)
                 self.ui.text(piece)
 
+            self.model.log = self.log  # the adapter may be shared (e.g. generator and evaluator): log to this agent
             try:
                 response = self.model.complete(msgs, tool_schemas(names), on_text=on_text if stream else None,
                                                max_tokens=self.config.max_output_tokens)
@@ -169,7 +187,7 @@ class Agent:
                     recoveries += 1
                     step -= 1
                     continue
-                return TurnResult("api_error", steps=step, error=str(e))
+                return TurnResult("api_error", steps=step - 1, error=str(e))  # steps = completed model calls
             if streamed:
                 self.ui.text_end()
             recoveries = 0
@@ -252,6 +270,7 @@ class Agent:
         cap = int(self.window() * CHARS_PER_TOKEN * 0.5)  # the summarizer's own request must fit
         if len(text) > cap:
             text = "[... the oldest part is omitted ...]\n" + text[-cap:]
+        self.model.log = self.log
         try:
             response = self.model.complete([{"role": "system", "content": SUMMARIZER_PROMPT},
                                             {"role": "user", "content": text}], tools=None, max_tokens=1500)
