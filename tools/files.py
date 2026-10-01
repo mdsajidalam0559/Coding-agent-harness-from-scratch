@@ -1,3 +1,4 @@
+import difflib
 import hashlib
 import re
 import os
@@ -329,3 +330,63 @@ def apply_edits(edits):
 def apply_edits_paths(edits):
     """File paths an apply_edits call would touch (used by the permission check)."""
     return [block["path"].strip() for block in _BLOCK_RE.finditer(edits)]
+
+
+MAX_PREVIEW_LINES = 60
+
+
+def _diff(path, old, new):
+    """Unified diff of a whole file's change, capped for display."""
+    lines = [line if line.endswith("\n") else line + "\n"
+             for line in difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
+                                              "/dev/null" if old == "" else f"a/{path}", f"b/{path}", n=2)]
+    if not lines:
+        return f"{path}: no change\n"
+    if len(lines) > MAX_PREVIEW_LINES:
+        lines = lines[:MAX_PREVIEW_LINES] + [f"... ({len(lines) - MAX_PREVIEW_LINES} more diff lines)\n"]
+    return "".join(lines)
+
+
+def preview_edit(tool, args):
+    """What an edit tool call would change, as a unified diff: shown when the user is asked to approve it.
+
+    Uses the same matching rules as the tools, so a preview of an edit that would be rejected says so.
+    """
+    try:
+        if tool == "write_file":
+            path = args.get("path", "")
+            old = _load(path) if os.path.isfile(resolve(path)) else ""
+            return _diff(path, old, args.get("content", ""))
+        if tool == "str_replace":
+            path, old_str = args.get("path", ""), args.get("old_str", "")
+            if not os.path.isfile(resolve(path)):
+                return f"{path}: does not exist, so this edit will be rejected\n"
+            content = _load(path)
+            count = content.count(old_str) if old_str else 0
+            if count != 1:
+                return f"{path}: the text to replace occurs {count} times, so this edit will be rejected\n"
+            return _diff(path, content, content.replace(old_str, args.get("new_str", ""), 1))
+        if tool == "apply_edits":
+            pending, notes = {}, []
+            for block in _BLOCK_RE.finditer(args.get("edits", "")):
+                path, search, replace = block["path"].strip(), block["search"], block["replace"]
+                if path in pending:
+                    content = pending[path]
+                elif os.path.isfile(resolve(path)):
+                    content = _load(path)
+                elif search == "":
+                    pending[path] = replace
+                    continue
+                else:
+                    notes.append(f"{path}: does not exist, so this block will be rejected\n")
+                    continue
+                if not search or content.count(search) != 1:
+                    notes.append(f"{path}: a block's SEARCH text occurs {content.count(search) if search else 0} times, "
+                                 f"so the whole call will be rejected\n")
+                    continue
+                pending[path] = content.replace(search, replace, 1)
+            diffs = [_diff(path, _load(path) if os.path.isfile(resolve(path)) else "", new) for path, new in pending.items()]
+            return "".join(notes + diffs) or "(no SEARCH/REPLACE blocks)\n"
+    except (OSError, UnicodeDecodeError) as e:
+        return f"(could not preview this edit: {e})\n"
+    return ""

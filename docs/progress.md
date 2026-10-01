@@ -23,7 +23,7 @@ measured: Groq allows 7k input tokens per request and 200k tokens per model per 
 | 13 | Explainable eval improvement | ✅ built, ⏳ measurement | 30 checks; ports chosen from the baseline's failures (docs/harness_comparison.md) |
 | 14 | Two agents on one core + score table | ✅ agents, ⏳ table | 49 checks; both agents solved a task live in headless mode |
 
-385 automated checks pass across the 14 suites (`python -m tests.run_all`).
+392 automated checks pass across the 14 suites (`python -m tests.run_all`).
 
 ## Live measurements
 

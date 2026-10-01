@@ -74,6 +74,44 @@ def test_permissions():
     check("auto allows commands", Policy(ws, mode="auto", ask=None).check("bash", {"command": "ls"})[0])
 
 
+def test_edit_approval_shows_the_diff():
+    from tools.registry import ToolContext, reset_context, set_context
+    ws, _ = make_workspace()
+    with open(os.path.join(ws, "calc.py"), "w") as f:
+        f.write("def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n")
+    shown = []
+    policy = Policy(ws, mode="auto-read", ask=lambda tool, summary: shown.append(summary) or "no")
+    token = set_context(ToolContext(ws))  # what the agent sets while it runs
+    try:
+        policy.check("str_replace", {"path": "calc.py", "old_str": "return a - b", "new_str": "return a + b"})
+        check("str_replace approval shows the actual change as a diff",
+              "-    return a - b" in shown[-1] and "+    return a + b" in shown[-1] and "--- a/calc.py" in shown[-1], shown[-1])
+        policy.check("str_replace", {"path": "calc.py", "old_str": "return", "new_str": "yield"})
+        check("an edit that will not apply says so instead of showing a diff", "occurs 2 times" in shown[-1]
+              and "rejected" in shown[-1])
+        policy.check("write_file", {"path": "new_module.py", "content": "x = 1\ny = 2\n"})
+        check("a new file shows its whole content as added lines", "+++ b/new_module.py" in shown[-1]
+              and "+x = 1" in shown[-1] and "+y = 2" in shown[-1])
+        policy.check("write_file", {"path": "calc.py", "content": "def add(a, b):\n    return a + b\n"})
+        check("overwriting a file shows what is removed", "-def mul(a, b):" in shown[-1])
+        block = lambda path, search, replace: f"{path}\n<<<<<<< SEARCH\n{search}=======\n{replace}>>>>>>> REPLACE\n"
+        policy.check("apply_edits", {"edits": block("calc.py", "    return a - b\n", "    return a + b\n")
+                                     + block("other.py", "", "z = 3\n")})
+        check("apply_edits shows one diff per file", "+++ b/calc.py" in shown[-1] and "+++ b/other.py" in shown[-1])
+        policy.check("write_file", {"path": "big.py", "content": "".join(f"line {i}\n" for i in range(500))})
+        check("long diffs are capped", "more diff lines" in shown[-1] and shown[-1].count("\n") < 70)
+    finally:
+        reset_context(token)
+
+    from unittest import mock as _mock
+    from safety import permissions
+    printed = []
+    with _mock.patch("builtins.input", return_value="y"), _mock.patch("builtins.print", side_effect=printed.append):
+        answer = permissions.terminal_ask("str_replace", "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n")
+    check("the terminal prompt prints the diff line by line before asking", answer == "yes"
+          and any("-a = 1" in str(p) for p in printed) and any("+a = 2" in str(p) for p in printed))
+
+
 def docker_available():
     return subprocess.run(["docker", "ps"], capture_output=True).returncode == 0
 
@@ -179,6 +217,7 @@ def test_injection_checkpoint():
 
 if __name__ == "__main__":
     test_permissions()
+    test_edit_approval_shows_the_diff()
     if docker_available():
         test_sandbox()
         test_injection_checkpoint()

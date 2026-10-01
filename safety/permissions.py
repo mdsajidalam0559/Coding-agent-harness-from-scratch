@@ -2,8 +2,9 @@
 import fnmatch
 import os
 import re
+import sys
 
-from tools.files import apply_edits_paths
+from tools.files import apply_edits_paths, preview_edit
 
 READ_TOOLS = {"read_file", "list_dir", "search"}
 WRITE_TOOLS = {"write_file", "str_replace", "apply_edits"}
@@ -60,6 +61,9 @@ def _paths(tool, args):
 
 
 def _summary(tool, args):
+    """What the user sees when asked to approve: the command, or for edits the diff they would make."""
+    if tool in WRITE_TOOLS:
+        return preview_edit(tool, args)
     if tool == "bash":
         return args.get("command", "")
     if tool == "apply_edits":
@@ -69,9 +73,29 @@ def _summary(tool, args):
     return args.get("path", ".")
 
 
+def _colored(line):
+    """Diff lines in color when printing to a terminal (+ green, - red, @@ cyan)."""
+    if not sys.stdout.isatty():
+        return line
+    if line.startswith("+") and not line.startswith("+++"):
+        return f"\033[32m{line}\033[0m"
+    if line.startswith("-") and not line.startswith("---"):
+        return f"\033[31m{line}\033[0m"
+    if line.startswith("@@"):
+        return f"\033[36m{line}\033[0m"
+    return line
+
+
 def terminal_ask(tool, summary):
     """Ask the human at the terminal. Returns 'yes', 'no' or 'always'."""
-    answer = input(f"\n  ⚠️  Allow {tool}: {summary}\n     [y]es / [n]o / [a]lways for {tool}: ").strip().lower()
+    if "\n" in summary.strip():  # an edit's diff: show it in full before asking
+        print(f"\n  ⚠️  Allow {tool}?")
+        for line in summary.rstrip("\n").splitlines():
+            print("     " + _colored(line))
+        prompt = f"     [y]es / [n]o / [a]lways for {tool}: "
+    else:
+        prompt = f"\n  ⚠️  Allow {tool}: {summary.strip()}\n     [y]es / [n]o / [a]lways for {tool}: "
+    answer = input(prompt).strip().lower()
     return {"y": "yes", "yes": "yes", "a": "always", "always": "always"}.get(answer, "no")
 
 

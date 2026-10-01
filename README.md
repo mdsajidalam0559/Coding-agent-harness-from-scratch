@@ -94,7 +94,7 @@ The core never knows which provider it talks to. Three adapters cover almost eve
   list catches obvious mistakes but is trivially bypassed (`python -c "shutil.rmtree(...)"`), so
   commands also run in a Docker container: only the project mounted, `.env` masked, no network by
   default, memory/CPU/process limits, no capabilities, your user id.
-- **Permission modes** ask / auto-read / auto-edit / auto; file tools are confined to the workspace
+- **Permission modes** ask / auto-read / auto-edit / auto (approving an edit shows its diff first); file tools are confined to the workspace
   (symlinks and `..` resolved). Unattended runs (evals, headless, long-running) have nobody to ask,
   so anything needing approval is denied.
 - **Config that ships with a repo is untrusted.** A cloned repo's `.agent/mcp.json` or `hooks.json`
@@ -176,6 +176,9 @@ See [docs/progress.md](docs/progress.md) for the score table (Day 6 baseline vs 
 mini-SWE-agent) and what the numbers do and do not show.
 
 ## Known limitations
+
+What comes next, and why, is in [docs/future_scope.md](docs/future_scope.md).
+
 
 - The Docker sandbox and the Day 5 prompt-injection checkpoint have not run on this machine yet
   (the user is not in the `docker` group). All evals so far ran with `--sandbox off`.
