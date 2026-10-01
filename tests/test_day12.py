@@ -69,7 +69,7 @@ def test_stdio_client():
         check("JSON-RPC errors become MCPError with the server's code", e.code == -32601)
 
     env_names = format_result(client.call_tool("env", {})).split(",")
-    assert os.getenv("GROQAPI_KEY"), "the agent's .env keys must be loaded for this check to mean anything"
+    assert os.getenv("GROQAPI_KEY"), "an API key must be in our environment for this check to mean anything"
     check("the server does not inherit our API keys", "GROQAPI_KEY" not in env_names and "OPENROUTER_KEY" not in env_names
           and "PATH" in env_names, env_names)
 

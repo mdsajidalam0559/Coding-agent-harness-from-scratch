@@ -49,12 +49,20 @@ def _remember(path, content):
     _reads()[_key(path)] = _digest(content)
 
 
-def _check_fresh(path, content):
-    """Return an error string if the agent may not modify this file, else None."""
+def _staleness(path, content):
+    """None if the agent's last read of this file matches its content, else 'unread' or 'changed'."""
     recorded = _reads().get(_key(path))
     if recorded is None:
+        return "unread"
+    return None if recorded == _digest(content) else "changed"
+
+
+def _check_fresh(path, content):
+    """Return an error string if the agent may not modify this file, else None."""
+    state = _staleness(path, content)
+    if state == "unread":
         return f"Error: you have not read {path} yet. Call read_file on it before modifying it."
-    if recorded != _digest(content):
+    if state == "changed":
         return (f"Error: {path} changed on disk since you last read it (for example by a bash command). "
                 f"Call read_file again and base your edit on the current content.")
     return None
@@ -347,21 +355,34 @@ def _diff(path, old, new):
     return "".join(lines)
 
 
+def _stale_note(path, content, outcome="this edit will be rejected"):
+    """For the preview: why the tool would refuse to touch this file (read-before-edit rule), or None."""
+    why = {"unread": "the agent has not read it yet",
+           "changed": "it changed on disk since the agent last read it"}.get(_staleness(path, content))
+    return f"{path}: {why}, so {outcome}\n" if why else None
+
+
 def preview_edit(tool, args):
     """What an edit tool call would change, as a unified diff: shown when the user is asked to approve it.
 
-    Uses the same matching rules as the tools, so a preview of an edit that would be rejected says so.
+    Uses the same rules as the tools (read before edit, exact match), so a preview of an edit that would be
+    rejected says so.
     """
     try:
         if tool == "write_file":
             path = args.get("path", "")
-            old = _load(path) if os.path.isfile(resolve(path)) else ""
-            return _diff(path, old, args.get("content", ""))
+            if not os.path.isfile(resolve(path)):
+                return _diff(path, "", args.get("content", ""))
+            old = _load(path)
+            return _stale_note(path, old) or _diff(path, old, args.get("content", ""))
         if tool == "str_replace":
             path, old_str = args.get("path", ""), args.get("old_str", "")
             if not os.path.isfile(resolve(path)):
                 return f"{path}: does not exist, so this edit will be rejected\n"
             content = _load(path)
+            note = _stale_note(path, content)
+            if note:
+                return note
             count = content.count(old_str) if old_str else 0
             if count != 1:
                 return f"{path}: the text to replace occurs {count} times, so this edit will be rejected\n"
@@ -374,6 +395,10 @@ def preview_edit(tool, args):
                     content = pending[path]
                 elif os.path.isfile(resolve(path)):
                     content = _load(path)
+                    note = _stale_note(path, content, "the whole call will be rejected")
+                    if note:
+                        notes.append(note)
+                        continue
                 elif search == "":
                     pending[path] = replace
                     continue

@@ -238,7 +238,8 @@ def test_done_needs_new_tests_and_regressions_are_named():
     with mock.patch.object(requests, "post", side_effect=post):
         outcome = session.work_session(ws, 1, quiet=True)
     check("breaking an earlier feature is reported as a new failure",
-          outcome["status"] == "failing" and outcome["new_failures"] == ["test_add (tests.test_add.Test)"], outcome)
+          outcome["status"] == "failing"  # unittest names it differently from Python 3.11 on, so compare the name
+          and [f.split(" (")[0] for f in outcome["new_failures"]] == ["test_add"], outcome)
     progress = open(os.path.join(ws, "progress.md")).read()
     check("progress.md names what this session broke", "New failures this session: test_add" in progress)
 

@@ -131,7 +131,7 @@ def last_assistant_reply(messages):
     return replies[-1] if replies else ""
 
 
-def run_trial(agent, task, sandbox_mode, use_evaluator=False):
+def run_trial(agent, task, sandbox_mode, use_evaluator=False, provider="openrouter"):
     trial_dir = tempfile.mkdtemp(prefix=f"eval-{task['name']}-")
     workdir = os.path.join(trial_dir, "work")
     prepare(task, workdir)
@@ -157,7 +157,7 @@ def run_trial(agent, task, sandbox_mode, use_evaluator=False):
             agent.agentic_loop(task["prompt"])
             if use_evaluator:
                 from models.registry import make_model
-                verdicts = review_loop(make_model(f"{getattr(agent, 'PROVIDER', 'openrouter')}:{agent.MODEL}"), task,
+                verdicts = review_loop(make_model(f"{provider}:{agent.MODEL}"), task,
                                        workdir, lambda: last_assistant_reply(agent.messages), agent.agentic_loop,
                                        agent.log_file, tools.shell.SANDBOX)
     except Exception as e:  # a harness bug must not kill the whole run
@@ -307,8 +307,9 @@ def main():
                 agent.MODEL = importlib.import_module("days.day_7_agent").PROVIDERS[args.provider]["default_model"]
         if args.model:
             agent.MODEL = args.model
-        run = lambda task: run_trial(agent, task, args.sandbox, use_evaluator=args.evaluator)
+        # day 1-5 agents have no PROVIDER: --provider swapped their transport, so the evaluator must use it too
         model_name, provider = agent.MODEL, getattr(agent, "PROVIDER", args.provider or "openrouter")
+        run = lambda task: run_trial(agent, task, args.sandbox, use_evaluator=args.evaluator, provider=provider)
         protocol = getattr(agent, "PROTOCOL", None)  # day 7: tools or text (AGENT_PROTOCOL=text)
 
     label = args.label or datetime.now().strftime("%Y%m%d-%H%M%S")

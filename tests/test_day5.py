@@ -84,6 +84,12 @@ def test_edit_approval_shows_the_diff():
     token = set_context(ToolContext(ws))  # what the agent sets while it runs
     try:
         policy.check("str_replace", {"path": "calc.py", "old_str": "return a - b", "new_str": "return a + b"})
+        check("editing a file the agent has not read says it will be rejected, instead of a diff",
+              "has not read it yet" in shown[-1] and "rejected" in shown[-1] and "+++" not in shown[-1], shown[-1])
+        policy.check("write_file", {"path": "calc.py", "content": "x = 1\n"})
+        check("so does overwriting an unread file", "has not read it yet" in shown[-1], shown[-1])
+        execute_tool("read_file", {"path": "calc.py"})
+        policy.check("str_replace", {"path": "calc.py", "old_str": "return a - b", "new_str": "return a + b"})
         check("str_replace approval shows the actual change as a diff",
               "-    return a - b" in shown[-1] and "+    return a + b" in shown[-1] and "--- a/calc.py" in shown[-1], shown[-1])
         policy.check("str_replace", {"path": "calc.py", "old_str": "return", "new_str": "yield"})
@@ -100,6 +106,11 @@ def test_edit_approval_shows_the_diff():
         check("apply_edits shows one diff per file", "+++ b/calc.py" in shown[-1] and "+++ b/other.py" in shown[-1])
         policy.check("write_file", {"path": "big.py", "content": "".join(f"line {i}\n" for i in range(500))})
         check("long diffs are capped", "more diff lines" in shown[-1] and shown[-1].count("\n") < 70)
+        with open(os.path.join(ws, "calc.py"), "a") as f:
+            f.write("# changed by a bash command\n")
+        policy.check("apply_edits", {"edits": block("calc.py", "    return a - b\n", "    return a + b\n")})
+        check("a file changed since the agent read it is flagged too", "changed on disk" in shown[-1]
+              and "whole call will be rejected" in shown[-1], shown[-1])
     finally:
         reset_context(token)
 

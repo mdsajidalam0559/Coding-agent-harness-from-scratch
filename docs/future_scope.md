@@ -48,6 +48,7 @@ two, M = a day.
 |---|---|---|
 | **Automatic test/lint loop after edits** (Aider's "reflection") | Feed failures back without the model deciding to check. The hook system and syntax check are already there; A/B it with the evals. | S |
 | **Parallel read-only tools** | Run reads and searches from one response concurrently, writes in order; `asyncio` or a thread pool. A good concurrency exercise. | M |
+| **Agents in parallel** | Each agent already has its own workspace, sandbox and read record (`ToolContext`), but some state is still module-level and shared: the todo list, `features.STATE`, the evaluator's `VERDICT` and `ask.HANDLER`. Harmless while agents run one after another; move it into the context before running several at once. | S |
 | **Persistent memory** | Let the agent append learnings to `AGENTS.md` on request, so the next session starts smarter. | S |
 | **Repo map** (Aider) | `ast`/tree-sitter definitions and references, ranked, packed into a token budget. Compare with search-on-demand on `find-bug-in-package`. | M |
 | **LSP diagnostics after edits** | Real type/lint errors instead of a syntax check; JSON-RPC again, like MCP. | M |
