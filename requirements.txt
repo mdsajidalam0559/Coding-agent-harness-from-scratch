@@ -1,0 +1,4 @@
+# The harness itself needs only these; everything else (HTTP, SSE, MCP, sandbox) is written from scratch.
+requests
+python-dotenv
+# Optional: mini-SWE-agent for the final comparison runs in its own environment via `uv run --with mini-swe-agent`.

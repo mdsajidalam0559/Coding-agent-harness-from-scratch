@@ -1,0 +1,17 @@
+# secrets
+.env
+*.pem
+# environments and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# agent transcripts and per-run state
+.agent/
+agent_transcript.jsonl
+# backups made outside git
+*-backup-*.tar.gz
+# personal notebooks and notes (kept local)
+main.ipynb
+day_2.ipynb
+learn.md

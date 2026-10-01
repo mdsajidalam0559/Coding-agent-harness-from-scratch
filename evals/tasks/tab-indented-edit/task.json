@@ -1,0 +1,3 @@
+{
+  "prompt": "In legacy.py, make the discount apply when the total is over 50 instead of over 100, and give 20% off instead of 10%. Keep the file's existing indentation style."
+}

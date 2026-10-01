@@ -1,0 +1,3 @@
+{
+  "prompt": "The tests in this project are failing. Run them with `python -m unittest -v`, find the bugs in the code and fix them. Do not change the tests."
+}

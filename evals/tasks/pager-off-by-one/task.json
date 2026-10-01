@@ -1,0 +1,3 @@
+{
+  "prompt": "Users report two bugs in pager.py: the first page of results is always skipped, and when the last page is only partly full it is missing from the page count. Fix both bugs."
+}

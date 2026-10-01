@@ -1,0 +1,3 @@
+{
+  "prompt": "What is the average order value (amount) for orders placed by customers in Germany? Customers are in customers.csv (some rows are duplicated), orders in orders.csv. Round to 2 decimals and save the answer to reports/answer.md."
+}

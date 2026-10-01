@@ -1,0 +1,3 @@
+{
+  "prompt": "Add a --json flag to wordfreq.py. With --json it prints the top words as a single JSON object mapping each word to its count, in the same order and respecting --top. Without --json the output must stay exactly as it is now."
+}
